@@ -1,0 +1,154 @@
+name: RDP
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2025
+    timeout-minutes: 3600
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Ownership Verification
+        run: Write-Host "ToolboxLab.xyz - RDP Workflow Ready"
+
+      - name: Create Directories
+        run: |
+          New-Item -Path "D:\link subscribe youtube channel" -ItemType Directory -Force
+          New-Item -Path "D:\Script" -ItemType Directory -Force
+          Write-Host "Directories created"
+
+      - name: Configure RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "TOOLBOXLAP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "TOOLBOXLAP" -Password $securePass -AccountNeverExpires
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+
+      - name: Install Tor Browser
+        run: |
+          if (Test-Path ".\tor-browser-windows-x86_64-portable-14.5.6.exe") {
+              Copy-Item ".\tor-browser-windows-x86_64-portable-14.5.6.exe" "$env:TEMP\tor-installer.exe"
+              Start-Process -FilePath "$env:TEMP\tor-installer.exe" -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+              Write-Host "Tor Browser installed from local file"
+          } else {
+              Write-Host "Tor Browser file not found, downloading..."
+              $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
+              $torPath = "$env:TEMP\tor-installer.exe"
+              Invoke-WebRequest -Uri $torUrl -OutFile $torPath
+              Start-Process -FilePath $torPath -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+              Write-Host "Tor Browser downloaded and installed"
+          }
+
+      - name: Install Python Dependencies Only
+        run: |
+          Write-Host "Installing Python packages (Python already available)..."
+          python -m pip install --upgrade pip
+          python -m pip install selenium selenium-wire requests pysocks stem "blinker<1.4"
+          Write-Host "Python dependencies installed successfully"
+
+      - name: Copy Scripts from Repository
+        run: |
+          if (Test-Path ".\FINAL_3_WINDOWS_TRUSTWORTHY.py") {
+              Copy-Item ".\FINAL_3_WINDOWS_TRUSTWORTHY.py" "D:\Script\" -Force
+              Write-Host "FINAL_3_WINDOWS_TRUSTWORTHY.py copied from repo"
+          }
+          if (Test-Path ".\FINAL_3_WINDOWS_TRUSTWORTHY-original.py") {
+              Copy-Item ".\FINAL_3_WINDOWS_TRUSTWORTHY-original.py" "D:\Script\" -Force
+              Write-Host "FINAL_3_WINDOWS_TRUSTWORTHY-original.py copied from repo"
+          }
+          if (Test-Path ".\usa_residential_gui.py") {
+              Copy-Item ".\usa_residential_gui.py" "D:\Script\" -Force
+              Write-Host "usa_residential_gui.py copied from repo"
+          }
+          Write-Host "Repository scripts copied successfully"
+
+      - name: Create Desktop Launchers
+        run: |
+          Start-Sleep -Seconds 5
+          $desktopPath = "C:\Users\TOOLBOXLAP\Desktop"
+          if (-not (Test-Path $desktopPath)) {
+              New-Item -Path $desktopPath -ItemType Directory -Force
+          }
+          
+          $batch1Content = "@echo off`ncd /d `"D:\Script`"`npython `"FINAL_3_WINDOWS_TRUSTWORTHY.py`"`npause"
+          $batch2Content = "@echo off`ncd /d `"D:\Script`"`npython `"usa_residential_gui.py`"`npause"
+          $batch3Content = "@echo off`ncd /d `"D:\Script`"`npython `"FINAL_3_WINDOWS_TRUSTWORTHY-original.py`"`npause"
+          $torBatchContent = "@echo off`ncd /d `"C:\Tor Browser\Browser`"`nstart firefox.exe"
+          
+          $batch1Content | Out-File -FilePath "$desktopPath\TRUSTWORTHY Script.bat" -Encoding ASCII
+          $batch2Content | Out-File -FilePath "$desktopPath\USA Residential GUI.bat" -Encoding ASCII
+          $batch3Content | Out-File -FilePath "$desktopPath\TRUSTWORTHY Original.bat" -Encoding ASCII
+          $torBatchContent | Out-File -FilePath "$desktopPath\Tor Browser.bat" -Encoding ASCII
+          
+          Write-Host "Desktop launchers created successfully"
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Connect Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned"
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "RDP connection test failed"
+              exit 1
+          }
+          Write-Host "RDP connectivity verified"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "=== RDP ACCESS READY ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "========================="
+          Write-Host ""
+          Write-Host "Desktop Files Available:"
+          Write-Host "- TRUSTWORTHY Script.bat (Multi-browser automation)"
+          Write-Host "- TRUSTWORTHY Original.bat (Original script)"
+          Write-Host "- USA Residential GUI.bat (Proxy interface)"
+          Write-Host "- Tor Browser.bat (Tor launcher)"
+          Write-Host ""
+          Write-Host "Files in D:\Script\"
+          Get-ChildItem "D:\Script\" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  - $($_.Name)" }
+          Write-Host ""
+          Write-Host "System 100% ready for use!"
+          Write-Host ""
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              Start-Sleep -Seconds 300
+          }
