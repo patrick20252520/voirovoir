@@ -81,30 +81,34 @@ jobs:
 
       - name: Install Tor Browser
         run: |
-          $torFiles = @(
-              "$env:TEMP\tor-browser-windows-x86_64-portable-14.5.6.exe",
-              "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
-          )
+          Write-Host "=== TOR BROWSER INSTALLATION ==="
           
           $torInstalled = $false
-          foreach ($torFile in $torFiles) {
-              if (Test-Path $torFile) {
-                  Write-Host "Installing Tor Browser from: $torFile"
-                  Start-Process -FilePath $torFile -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
-                  Write-Host "Tor Browser installed successfully"
-                  $torInstalled = $true
-                  break
-              }
+          $torFile1 = "$env:TEMP\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          $torFile2 = "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          
+          if (Test-Path $torFile1) {
+              Write-Host "Installing Tor Browser from TEMP folder"
+              Start-Process -FilePath $torFile1 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+              $torInstalled = $true
+          }
+          elseif (Test-Path $torFile2) {
+              Write-Host "Installing Tor Browser from D:\Script folder"
+              Start-Process -FilePath $torFile2 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+              $torInstalled = $true
           }
           
           if (-not $torInstalled) {
-              Write-Host "Tor Browser file not found in downloads, using official source..."
+              Write-Host "Tor Browser not found in downloads, downloading from official source"
               $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
               $torPath = "$env:TEMP\tor-installer.exe"
-              Invoke-WebRequest -Uri $torUrl -OutFile $torPath
-              Start-Process -FilePath $torPath -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
-              Write-Host "Tor Browser downloaded and installed from official source"
+              Write-Host "Downloading Tor Browser..."
+              Invoke-WebRequest -Uri $torUrl -OutFile $torPath -UseBasicParsing
+              Write-Host "Installing Tor Browser..."
+              Start-Process -FilePath $torPath -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
           }
+          
+          Write-Host "Tor Browser installation completed"
 
       - name: Install Python Dependencies
         run: |
@@ -148,7 +152,7 @@ jobs:
           
           foreach ($pyFile in $pythonFiles) {
               $batchName = $pyFile.BaseName -replace "_", " "
-              $batchContent = "@echo off`ncd /d `"D:\Script`"`npython `"$($pyFile.Name)`"`npause"
+              $batchContent = "@echo off`ncd /d `"D:\Script`"`nstart `"$batchName`" python.exe `"$($pyFile.Name)`""
               $batchPath = "$desktopPath\$batchName.bat"
               $batchContent | Out-File -FilePath $batchPath -Encoding ASCII
               Write-Host "Created launcher: $batchName.bat"
@@ -169,18 +173,45 @@ jobs:
 
       - name: Connect Tailscale
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          Write-Host "=== TAILSCALE CONNECTION ==="
+          
+          # VÃ©rifier si le secret existe
+          $authKey = "${{ secrets.TAILSCALE_AUTHKEY }}"
+          if ([string]::IsNullOrEmpty($authKey)) {
+              Write-Host "ERROR: TAILSCALE_AUTHKEY secret is missing!"
+              Write-Host "Please add the secret in GitHub Settings > Secrets > Actions"
+              Write-Host "Secret name: TAILSCALE_AUTHKEY"
+              Write-Host "Secret value: Your Pre-approved Tailscale auth key (tskey-auth-...)"
+              exit 1
+          }
+          
+          Write-Host "Auth key found, connecting to Tailscale..."
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=$authKey --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false --shields-up=false --advertise-exit-node=false
+          Write-Host "Tailscale connection initiated"
+          
           $tsIP = $null
           $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
+          Write-Host "Waiting for Tailscale IP assignment..."
+          while (-not $tsIP -and $retries -lt 20) {
+              Start-Sleep -Seconds 3
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
+              if ($tsIP) {
+                  Write-Host "Tailscale IP assigned: $tsIP"
+              } else {
+                  Write-Host "Retry $retries/20 - Waiting for IP..."
+              }
               $retries++
           }
+          
           if (-not $tsIP) {
+              Write-Host "ERROR: Tailscale IP not assigned after 20 retries"
+              Write-Host "Tailscale status:"
+              & "$env:ProgramFiles\Tailscale\tailscale.exe" status
               Write-Error "Tailscale IP not assigned"
               exit 1
           }
+          
+          Write-Host "Tailscale connected successfully with IP: $tsIP"
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
       - name: Verify RDP
