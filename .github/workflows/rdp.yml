@@ -1,0 +1,221 @@
+name: RDP
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2025
+    timeout-minutes: 3600
+    steps:
+      - name: Ownership Verification
+        run: Write-Host "ToolboxLap.xyz - RDP Workflow Ready"
+
+      - name: Create Directories
+        run: |
+          New-Item -Path "D:\link subscribe youtube channel" -ItemType Directory -Force
+          New-Item -Path "D:\Script" -ItemType Directory -Force
+          Write-Host "Directories created"
+
+      - name: Configure RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          if (-not (Get-LocalUser -Name "TOOLBOXLAP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "TOOLBOXLAP" -Password $securePass -AccountNeverExpires
+          }
+          Add-LocalGroupMember -Group "Administrators" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP" -ErrorAction SilentlyContinue
+
+      - name: Install gdown for Google Drive Downloads
+        run: |
+          Write-Host "Installing gdown for Google Drive downloads..."
+          python -m pip install gdown
+          Write-Host "gdown installed successfully"
+
+      - name: Download Files from Google Drive Folder
+        run: |
+          Write-Host "Downloading files from Google Drive folder..."
+          $folderId = "1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          
+          try {
+              python -m gdown --folder "https://drive.google.com/drive/folders/$folderId" -O "D:\Script" --quiet
+              Write-Host "Files downloaded from Google Drive folder"
+              
+              Write-Host "Downloaded files:"
+              Get-ChildItem "D:\Script\" -ErrorAction SilentlyContinue | ForEach-Object { 
+                  $sizeKB = [math]::Round($_.Length/1KB, 2)
+                  Write-Host "   - $($_.Name) ($sizeKB KB)"
+              }
+              
+          } catch {
+              Write-Host "gdown folder download failed, trying alternative method..."
+              
+              $knownFiles = @(
+                  "FINAL_3_WINDOWS_TRUSTWORTHY.py",
+                  "FINAL_3_WINDOWS_TRUSTWORTHY-original.py",
+                  "usa_residential_gui.py",
+                  "tor-browser-windows-x86_64-portable-14.5.6.exe"
+              )
+              
+              foreach ($file in $knownFiles) {
+                  try {
+                      if ($file -like "*.exe") {
+                          python -m gdown --fuzzy "https://drive.google.com/drive/folders/$folderId" -O "$env:TEMP\$file" --quiet
+                      } else {
+                          python -m gdown --fuzzy "https://drive.google.com/drive/folders/$folderId" -O "D:\Script\$file" --quiet
+                      }
+                      Write-Host "Downloaded $file"
+                  } catch {
+                      Write-Host "Could not download $file"
+                  }
+              }
+          }
+
+      - name: Install Tor Browser
+        run: |
+          $torFiles = @(
+              "$env:TEMP\tor-browser-windows-x86_64-portable-14.5.6.exe",
+              "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          )
+          
+          $torInstalled = $false
+          foreach ($torFile in $torFiles) {
+              if (Test-Path $torFile) {
+                  Write-Host "Installing Tor Browser from: $torFile"
+                  Start-Process -FilePath $torFile -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+                  Write-Host "Tor Browser installed successfully"
+                  $torInstalled = $true
+                  break
+              }
+          }
+          
+          if (-not $torInstalled) {
+              Write-Host "Tor Browser file not found in downloads, using official source..."
+              $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
+              $torPath = "$env:TEMP\tor-installer.exe"
+              Invoke-WebRequest -Uri $torUrl -OutFile $torPath
+              Start-Process -FilePath $torPath -ArgumentList "/S", "/D=C:\Tor Browser" -Wait
+              Write-Host "Tor Browser downloaded and installed from official source"
+          }
+
+      - name: Install Python Dependencies
+        run: |
+          Write-Host "Installing Python packages..."
+          python -m pip install --upgrade pip
+          python -m pip install selenium selenium-wire requests pysocks stem "blinker<1.4"
+          Write-Host "Python dependencies installed successfully"
+
+      - name: Verify Downloaded Scripts
+        run: |
+          Write-Host "Verifying downloaded Python scripts..."
+          $scriptFiles = Get-ChildItem "D:\Script\" -Filter "*.py" -ErrorAction SilentlyContinue
+          
+          if ($scriptFiles.Count -gt 0) {
+              Write-Host "Found $($scriptFiles.Count) Python script(s):"
+              foreach ($script in $scriptFiles) {
+                  $size = [math]::Round($script.Length/1KB, 2)
+                  Write-Host "   - $($script.Name) ($size KB)"
+              }
+          } else {
+              Write-Host "No Python scripts found in D:\Script\"
+              Write-Host "Creating minimal fallback script..."
+              
+              $fallbackContent = 'print("Google Drive download may have failed.")'
+              $fallbackContent += "`n" + 'print("Please check your Google Drive folder and ensure files are publicly accessible.")'
+              $fallbackContent += "`n" + 'print("Folder ID: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S")'
+              $fallbackContent += "`n" + 'input("Press Enter to close...")'
+              
+              $fallbackContent | Out-File -FilePath "D:\Script\fallback_info.py" -Encoding UTF8
+          }
+
+      - name: Create Desktop Launchers
+        run: |
+          Start-Sleep -Seconds 5
+          $desktopPath = "C:\Users\TOOLBOXLAP\Desktop"
+          if (-not (Test-Path $desktopPath)) {
+              New-Item -Path $desktopPath -ItemType Directory -Force
+          }
+          
+          $pythonFiles = Get-ChildItem "D:\Script\" -Filter "*.py" -ErrorAction SilentlyContinue
+          
+          foreach ($pyFile in $pythonFiles) {
+              $batchName = $pyFile.BaseName -replace "_", " "
+              $batchContent = "@echo off`ncd /d `"D:\Script`"`npython `"$($pyFile.Name)`"`npause"
+              $batchPath = "$desktopPath\$batchName.bat"
+              $batchContent | Out-File -FilePath $batchPath -Encoding ASCII
+              Write-Host "Created launcher: $batchName.bat"
+          }
+          
+          $torBatchContent = "@echo off`ncd /d `"C:\Tor Browser\Browser`"`nstart firefox.exe"
+          $torBatchContent | Out-File -FilePath "$desktopPath\Tor Browser.bat" -Encoding ASCII
+          
+          Write-Host "Desktop launchers created successfully"
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Connect Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned"
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "RDP connection test failed"
+              exit 1
+          }
+          Write-Host "RDP connectivity verified"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "=== RDP ACCESS READY ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "========================="
+          Write-Host ""
+          Write-Host "Desktop Launchers Available:"
+          $desktopFiles = Get-ChildItem "C:\Users\TOOLBOXLAP\Desktop\" -Filter "*.bat" -ErrorAction SilentlyContinue
+          foreach ($file in $desktopFiles) {
+              Write-Host "   - $($file.Name)"
+          }
+          Write-Host ""
+          Write-Host "Files in D:\Script\"
+          Get-ChildItem "D:\Script\" -ErrorAction SilentlyContinue | ForEach-Object { 
+              Write-Host "   - $($_.Name)"
+          }
+          Write-Host ""
+          Write-Host "System ready! Files downloaded from Google Drive"
+          Write-Host "Google Drive Folder: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          Write-Host ""
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
+              Start-Sleep -Seconds 300
+          }
