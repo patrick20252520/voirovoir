@@ -139,10 +139,19 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          Write-Host "Installing Python packages..."
+          Write-Host "Installing Python packages with specific versions..."
           python -m pip install --upgrade pip
-          python -m pip install selenium selenium-wire requests pysocks stem "blinker<1.4"
-          Write-Host "Python dependencies installed successfully"
+          
+          # DÃ©sinstaller les anciennes versions
+          Write-Host "Uninstalling old versions..."
+          python -m pip uninstall -y selenium selenium-wire blinker
+          
+          # Installer les versions spÃ©cifiques
+          Write-Host "Installing specific versions..."
+          python -m pip install blinker==1.6.2
+          python -m pip install selenium==4.1.0 selenium-wire==5.1.0 requests pysocks stem
+          
+          Write-Host "Python dependencies installed successfully with correct versions"
 
       - name: Verify Downloaded Scripts
         run: |
