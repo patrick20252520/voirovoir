@@ -14,6 +14,12 @@ jobs:
           New-Item -Path "D:\link subscribe youtube channel" -ItemType Directory -Force
           New-Item -Path "D:\Script" -ItemType Directory -Force
           Write-Host "Directories created"
+          
+          # DÃ©finir le nom du RDP basÃ© sur le repository GitHub
+          $repoFullName = "${{ github.repository }}"
+          $repoName = $repoFullName.Split('/')[-1]
+          [System.Environment]::SetEnvironmentVariable('RDP_NAME', $repoName, 'Machine')
+          Write-Host "RDP Name set to: $repoName"
 
       - name: Configure RDP Settings
         run: |
@@ -44,7 +50,7 @@ jobs:
         continue-on-error: true
         run: |
           Write-Host "Downloading files from Google Drive folder..."
-          $folderId = "1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          $folderId = "1HdvkRD8oY_KyqXqh9oqEFOtuwB2oCPFW"
           
           try {
               python -m gdown --folder "https://drive.google.com/drive/folders/$folderId" -O "D:\Script" --quiet
@@ -85,31 +91,46 @@ jobs:
           Write-Host "=== TOR BROWSER INSTALLATION ==="
           
           $torInstalled = $false
-          $torFile1 = "$env:TEMP\tor-browser-windows-x86_64-portable-14.5.6.exe"
-          $torFile2 = "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
+          $torFile = "D:\Script\tor-browser-windows-x86_64-portable-14.5.6.exe"
           
-          if (Test-Path $torFile1) {
-              Write-Host "Installing Tor Browser from TEMP folder"
-              Start-Process -FilePath $torFile1 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
-              $torInstalled = $true
-          }
-          elseif (Test-Path $torFile2) {
+          if (Test-Path $torFile) {
               Write-Host "Installing Tor Browser from D:\Script folder"
-              Start-Process -FilePath $torFile2 -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
-              $torInstalled = $true
+              try {
+                  Start-Process -FilePath $torFile -ArgumentList "/S", "/D=C:\Tor Browser" -Wait -NoNewWindow
+                  $torInstalled = $true
+                  Write-Host "Tor Browser installed successfully from Google Drive"
+              } catch {
+                  Write-Host "Failed to install Tor Browser: $($_.Exception.Message)"
+              }
+          } else {
+              Write-Host "Tor Browser file not found in D:\Script\"
+              Write-Host "Downloading Tor Browser from official source..."
+              
+              $torUrl = "https://www.torproject.org/dist/torbrowser/14.5.8/tor-browser-windows-x86_64-portable-14.5.8.exe"
+              $torDownloadPath = "$env:TEMP\tor-installer.exe"
+              
+              try {
+                  Write-Host "Downloading from: $torUrl"
+                  Invoke-WebRequest -Uri $torUrl -OutFile $torDownloadPath -UseBasicParsing -TimeoutSec 300
+                  
+                  if (Test-Path $torDownloadPath) {
+                      Write-Host "Download completed, installing..."
+                      Start-Process -FilePath $torDownloadPath -ArgumentList "/S", "/D=C:\Tor Browser" -Wait -NoNewWindow
+                      $torInstalled = $true
+                      Write-Host "Tor Browser installed successfully from official source"
+                  } else {
+                      Write-Host "Download failed - file not found"
+                  }
+              } catch {
+                  Write-Host "Failed to download/install Tor Browser: $($_.Exception.Message)"
+              }
           }
           
           if (-not $torInstalled) {
-              Write-Host "Tor Browser not found in downloads, downloading from official source"
-              $torUrl = "https://dist.torproject.org/torbrowser/14.0.3/tor-browser-windows-x86_64-portable-14.0.3.exe"
-              $torPath = "$env:TEMP\tor-installer.exe"
-              Write-Host "Downloading Tor Browser..."
-              Invoke-WebRequest -Uri $torUrl -OutFile $torPath -UseBasicParsing
-              Write-Host "Installing Tor Browser..."
-              Start-Process -FilePath $torPath -ArgumentList "/S /D=C:\Tor Browser" -Wait -NoNewWindow
+              Write-Host "Continuing without Tor Browser..."
           }
           
-          Write-Host "Tor Browser installation completed"
+          Write-Host "Tor Browser installation step completed"
           
           # Configurer Tor pour se connecter automatiquement
           Write-Host "Configuring Tor Browser for auto-connect..."
@@ -137,6 +158,62 @@ jobs:
           
           Write-Host "Tor Browser configured for auto-connect"
 
+      - name: Uninstall Old Chrome and Install Latest Version
+        run: |
+          Write-Host "=== CHROME INSTALLATION ==="
+          
+          # DÃ©sinstaller l'ancienne version de Chrome
+          Write-Host "Uninstalling old Chrome version..."
+          try {
+              $chromeUninstallPath = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Google Chrome" -ErrorAction SilentlyContinue
+              if ($chromeUninstallPath) {
+                  $uninstallString = $chromeUninstallPath.UninstallString
+                  if ($uninstallString) {
+                      Write-Host "Found Chrome installation, uninstalling..."
+                      Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstallString --force-uninstall" -Wait -NoNewWindow
+                      Write-Host "Old Chrome uninstalled successfully"
+                  }
+              } else {
+                  Write-Host "No existing Chrome installation found"
+              }
+          } catch {
+              Write-Host "Chrome uninstall skipped: $($_.Exception.Message)"
+          }
+          
+          # Attendre que la dÃ©sinstallation soit complÃ¨te
+          Start-Sleep -Seconds 3
+          
+          # TÃ©lÃ©charger et installer la derniÃ¨re version de Chrome
+          Write-Host "Downloading latest Chrome version..."
+          $chromeUrl = "https://dl.google.com/chrome/install/latest/chrome_installer.exe"
+          $chromeInstaller = "$env:TEMP\chrome_installer.exe"
+          
+          try {
+              Invoke-WebRequest -Uri $chromeUrl -OutFile $chromeInstaller -UseBasicParsing
+              Write-Host "Chrome installer downloaded"
+              
+              Write-Host "Installing Chrome..."
+              Start-Process -FilePath $chromeInstaller -ArgumentList "/silent", "/install" -Wait -NoNewWindow
+              
+              # VÃ©rifier l'installation
+              Start-Sleep -Seconds 5
+              $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+              if (Test-Path $chromePath) {
+                  $version = (Get-Item $chromePath).VersionInfo.ProductVersion
+                  Write-Host "Chrome installed successfully - Version: $version"
+              } else {
+                  Write-Host "WARNING: Chrome installation verification failed"
+              }
+              
+              # Nettoyer
+              Remove-Item $chromeInstaller -Force -ErrorAction SilentlyContinue
+              
+          } catch {
+              Write-Host "ERROR: Chrome installation failed: $($_.Exception.Message)"
+          }
+          
+          Write-Host "Chrome installation completed"
+
       - name: Install Python Dependencies
         run: |
           Write-Host "Installing Python packages with specific versions..."
@@ -151,7 +228,109 @@ jobs:
           python -m pip install blinker==1.6.2
           python -m pip install selenium==4.1.0 selenium-wire==5.1.0 requests pysocks stem
           
+          # Installer les dÃ©pendances pour le tracking
+          Write-Host "Installing tracking dependencies..."
+          python -m pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+          
           Write-Host "Python dependencies installed successfully with correct versions"
+
+      - name: Download RDP Tracking Scripts
+        run: |
+          Write-Host "=== DOWNLOADING RDP TRACKING SCRIPTS ==="
+          
+          # ID du dossier Google Drive contenant les scripts de tracking
+          $trackingFolderId = "1HdvkRD8oY_KyqXqh9oqEFOtuwB2oCPFW"
+          
+          # CrÃ©er le dossier de destination
+          $trackingPath = "D:\Script\RDP-Scripts"
+          New-Item -Path $trackingPath -ItemType Directory -Force | Out-Null
+          
+          # TÃ©lÃ©charger tout le dossier Google Drive
+          Write-Host "Downloading entire folder from Google Drive..."
+          $tempDownload = "$env:TEMP\gdrive-download"
+          
+          try {
+              python -m gdown --folder "https://drive.google.com/drive/folders/$trackingFolderId" -O "$tempDownload" --quiet
+              
+              # Trouver oÃ¹ gdown a mis les fichiers (peut crÃ©er un sous-dossier)
+              $possiblePaths = @(
+                  "$tempDownload",
+                  "$tempDownload\RDP-Scripts",
+                  "$tempDownload\*"
+              )
+              
+              $foundFiles = $false
+              foreach ($path in $possiblePaths) {
+                  $files = Get-ChildItem $path -File -ErrorAction SilentlyContinue
+                  if ($files.Count -gt 0) {
+                      Write-Host "Found files in: $path"
+                      # Copier tous les fichiers vers le dossier final
+                      Copy-Item -Path "$path\*" -Destination $trackingPath -Force -ErrorAction SilentlyContinue
+                      $foundFiles = $true
+                      break
+                  }
+              }
+              
+              if (-not $foundFiles) {
+                  Write-Host "WARNING: No files found after download"
+              }
+              
+              # Nettoyer le dossier temporaire
+              Remove-Item -Path $tempDownload -Recurse -Force -ErrorAction SilentlyContinue
+              
+          } catch {
+              Write-Host "ERROR: Download failed: $($_.Exception.Message)"
+          }
+          
+          # VÃ©rifier les fichiers tÃ©lÃ©chargÃ©s
+          $downloadedScripts = Get-ChildItem $trackingPath -Filter "*.py" -ErrorAction SilentlyContinue
+          
+          if ($downloadedScripts.Count -gt 0) {
+              Write-Host ""
+              Write-Host "Tracking scripts downloaded successfully:"
+              foreach ($script in $downloadedScripts) {
+                  Write-Host "   - $($script.Name)"
+              }
+          } else {
+              Write-Host ""
+              Write-Host "WARNING: No tracking scripts downloaded from Google Drive"
+          }
+          
+          # Toujours creer sitecustomize.py localement (version corrigee sans shebang)
+          Write-Host "Creating sitecustomize.py (overwriting if exists)..."
+          "try:" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Force
+          "    import sys" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "    import os" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          '    tracking_path = r"D:\Script\RDP-Scripts"' | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "    if os.path.exists(tracking_path) and tracking_path not in sys.path:" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "        sys.path.insert(0, tracking_path)" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "    import auto_tracker_wrapper" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "except:" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          "    pass" | Out-File -FilePath "$trackingPath\sitecustomize.py" -Encoding ASCII -Append
+          Write-Host "sitecustomize.py created successfully"
+          
+          Write-Host ""
+          Write-Host "Tracking scripts setup completed"
+          
+          # Installer sitecustomize.py pour activation automatique
+          Write-Host ""
+          Write-Host "Installing automatic tracking activation..."
+          
+          $pythonPath = (python -c "import sys; print(sys.executable)")
+          $pythonDir = Split-Path $pythonPath
+          $sitePackages = "$pythonDir\Lib\site-packages"
+          
+          if (Test-Path "$trackingPath\sitecustomize.py") {
+              Copy-Item "$trackingPath\sitecustomize.py" -Destination "$sitePackages\sitecustomize.py" -Force
+              Write-Host "sitecustomize.py installed in $sitePackages"
+          }
+          
+          if (Test-Path "$trackingPath\auto_tracker_wrapper.py") {
+              Copy-Item "$trackingPath\auto_tracker_wrapper.py" -Destination "$sitePackages\auto_tracker_wrapper.py" -Force
+              Write-Host "auto_tracker_wrapper.py installed"
+          }
+          
+          Write-Host "Automatic tracking will be enabled for all Python scripts"
 
       - name: Verify Downloaded Scripts
         run: |
@@ -170,7 +349,7 @@ jobs:
               
               $fallbackContent = 'print("Google Drive download may have failed.")'
               $fallbackContent += "`n" + 'print("Please check your Google Drive folder and ensure files are publicly accessible.")'
-              $fallbackContent += "`n" + 'print("Folder ID: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S")'
+              $fallbackContent += "`n" + 'print("Folder ID: 1HdvkRD8oY_KyqXqh9oqEFOtuwB2oCPFW")'
               $fallbackContent += "`n" + 'input("Press Enter to close...")'
               
               $fallbackContent | Out-File -FilePath "D:\Script\fallback_info.py" -Encoding UTF8
@@ -226,7 +405,7 @@ jobs:
               $bat1Content = "@echo off`ncd /d D:\Script`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py"
               $bat1Content | Out-File -FilePath "$desktopPath\Launch-Residential.bat" -Encoding ASCII -Force
               
-              $bat2Content = "@echo off`ncd /d D:\Script`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py"
+              $bat2Content = "@echo off`ncd /d D:\Script`nwhere wt >nul 2>&1`nif %errorlevel% equ 0 (`n    start wt -d `"D:\Script`" python FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`n) else (`n    start powershell -NoExit -Command `"cd D:\Script; python FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`"`n)"
               $bat2Content | Out-File -FilePath "$desktopPath\Launch-Trustworthy.bat" -Encoding ASCII -Force
               
               $batAllContent = "@echo off`ncd /d D:\Script`necho Launching Python scripts...`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py`ntimeout /t 2 /nobreak >nul`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`necho Scripts launched!"
@@ -234,9 +413,36 @@ jobs:
               
               $torBatchContent = "@echo off`ncd /d `"C:\Tor Browser\Browser`"`nstart firefox.exe"
               $torBatchContent | Out-File -FilePath "$desktopPath\Tor Browser.bat" -Encoding ASCII -Force
+              
+              # CrÃ©er launcher pour le Tracker en arriÃ¨re-plan
+              $trackerContent = "@echo off`ncd /d D:\Script\RDP-Scripts`nstart `"RDP Tracker`" /min cmd /k python start_tracker_background.py"
+              $trackerContent | Out-File -FilePath "$desktopPath\Start-Tracker.bat" -Encoding ASCII -Force
           }
           
           Write-Host "Desktop launchers created in all user desktops"
+          
+          # CrÃ©er un script de dÃ©marrage automatique pour enregistrer le RDP
+          Write-Host "Creating auto-start script for RDP registration..."
+          $startupFolder = "C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp"
+          
+          # Script batch qui attend que le systÃ¨me soit prÃªt
+          $line1 = "@echo off"
+          $line2 = "REM Auto-register RDP on dashboard at startup"
+          $line3 = "timeout /t 10 /nobreak >nul"
+          $line4 = "cd /d D:\Script\RDP-Scripts"
+          $line5 = "start `"RDP Registration`" /min cmd /c `"python rdp_register.py`""
+          $line6 = "exit"
+          
+          $autoRegisterRDP = "$line1`n$line2`n$line3`n$line4`n$line5`n$line6"
+          $autoRegisterRDP | Out-File -FilePath "$startupFolder\Auto-Register-RDP.bat" -Encoding ASCII -Force
+          Write-Host "RDP auto-registration configured in startup folder"
+          
+          # VÃ©rifier que le fichier a Ã©tÃ© crÃ©Ã©
+          if (Test-Path "$startupFolder\Auto-Register-RDP.bat") {
+              Write-Host "Auto-start script created successfully"
+          } else {
+              Write-Host "Warning: Auto-start script creation failed"
+          }
 
       - name: Install Tailscale
         run: |
@@ -323,11 +529,15 @@ jobs:
           $bat1 = "@echo off`ncd /d D:\Script`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py"
           $bat1 | Out-File -FilePath "$toolboxDesktop\Launch-Residential.bat" -Encoding ASCII -Force
           
-          $bat2 = "@echo off`ncd /d D:\Script`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py"
+          $bat2 = "@echo off`ncd /d D:\Script`nwhere wt >nul 2>&1`nif %errorlevel% equ 0 (`n    start wt -d `"D:\Script`" python FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`n) else (`n    start powershell -NoExit -Command `"cd D:\Script; python FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`"`n)"
           $bat2 | Out-File -FilePath "$toolboxDesktop\Launch-Trustworthy.bat" -Encoding ASCII -Force
           
           $batAll = "@echo off`ncd /d D:\Script`necho Launching Python scripts...`nstart `"Residential GUI`" cmd /k python.exe usa_residential_gui.py`ntimeout /t 2 /nobreak >nul`nstart `"Trustworthy`" cmd /k python.exe FINAL_3_WINDOWS_TRUSTWORTHY-Parfait.py`necho Scripts launched!"
           $batAll | Out-File -FilePath "$toolboxDesktop\Launch-ALL-Scripts.bat" -Encoding ASCII -Force
+          
+          # CrÃ©er launcher pour le Dashboard dans TOOLBOXLAP Desktop
+          $dashboardBat = "@echo off`ncd /d D:\Script\RDP-Scripts`nstart `"Dashboard Server`" cmd /k python rdp_tracker.py"
+          $dashboardBat | Out-File -FilePath "$toolboxDesktop\Launch-Dashboard.bat" -Encoding ASCII -Force
           
           # CrÃ©er un script PowerShell pour activer le toggle et lancer Tor
           $torScriptPath = "$toolboxDesktop\Launch-Tor.ps1"
@@ -432,7 +642,7 @@ jobs:
           }
           Write-Host ""
           Write-Host "System ready! Files downloaded from Google Drive"
-          Write-Host "Google Drive Folder: 1NOEhdBu-yJln-QkJx39JTWafLzWT8L3S"
+          Write-Host "Google Drive Folder: 1HdvkRD8oY_KyqXqh9oqEFOtuwB2oCPFW"
           Write-Host ""
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C to terminate"
